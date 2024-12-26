@@ -17,9 +17,10 @@ def parse_mhtml_file(file_path):
     image_dir = resource_dir / "image"
     css_dir = resource_dir / "css"
     js_dir = resource_dir / "javascript"
+    html_dir = resource_dir / "html"  # HTML 디렉토리 추가
     
     # 필요한 디렉토리 생성
-    for dir_path in [resource_dir, image_dir, css_dir, js_dir]:
+    for dir_path in [resource_dir, image_dir, css_dir, js_dir, html_dir]:  # html_dir 추가
         dir_path.mkdir(exist_ok=True)
     
     # 리소스 매핑 딕셔너리
@@ -63,10 +64,47 @@ def parse_mhtml_file(file_path):
             
         try:
             # HTML 메인 컨텐츠는 나중에 처리하기 위해 저장
-            if content_type == 'text/html' and not html_saved:
-                html_content = payload  # 이제 외부 변수에 저장됨
-                html_saved = True
-                return
+            if content_type == 'text/html':
+                if not html_saved:
+                    html_content = payload  # 이제 외부 변수에 저장됨
+                    html_saved = True
+                    return
+                else:
+                    # 추가 HTML 파일들은 리소스로 저장
+                    filename = Path(content_location).name if content_location else ""
+                    if not filename:
+                        filename = str(uuid.uuid4())[:8]
+                    
+                    # URL에서 파일명만 추출 (경로와 쿼리 파라미터 제거)
+                    filename = filename.split('/')[-1].split('?')[0]
+                    
+                    # 파일명 정리
+                    sanitized_filename = sanitize_filename(filename)
+                    if not sanitized_filename.endswith('.html'):
+                        sanitized_filename = f"{sanitized_filename}.html"
+                    
+                    # HTML 파일을 html 디렉토리에 저장
+                    save_path = html_dir / sanitized_filename
+                    save_path.write_text(payload.decode('utf-8', errors='ignore'))
+                    
+                    # 리소스 매핑 저장
+                    relative_save_path = str(save_path)
+                    if os.path.sep == '\\':
+                        relative_save_path = relative_save_path.replace('\\', '/')
+                    
+                    # 일반 경로 매핑
+                    if original_path:
+                        resource_mapping[original_path] = relative_save_path
+                        print(f"Mapped HTML path: {original_path} -> {relative_save_path}")
+                    
+                    # Content-ID 매핑
+                    if content_id:
+                        cid_url = f"cid:{content_id}"
+                        resource_mapping[cid_url] = relative_save_path
+                        resource_mapping[content_id] = relative_save_path
+                        cid_mapping[content_id] = relative_save_path
+                        print(f"Mapped HTML CID: {cid_url} -> {relative_save_path}")
+                        print(f"Mapped HTML CID (without prefix): {content_id} -> {relative_save_path}")
             
             # 리소스 파일 처리
             filename = Path(content_location).name if content_location else ""
@@ -156,6 +194,7 @@ def parse_mhtml_file(file_path):
         
         # 리소스 교체 카운터 추가
         replacement_count = 0
+        unmapped_resources = set()  # 매핑되지 않은 리소스 추적
         
         # 리소스 경로 업데이트
         for tag in soup.find_all(['img', 'script', 'link', 'iframe', 'frame']):
@@ -182,11 +221,16 @@ def parse_mhtml_file(file_path):
                     tag[src_attr] = resource_mapping[resource_path]
                     replacement_count += 1
                     print(f"Replaced ({replacement_count}) {resource_path} -> {resource_mapping[resource_path]}")
+                else:
+                    unmapped_resources.add(f"{tag.name}[{src_attr}]: {resource_path}")
             # 일반 경로 처리
             elif resource_path in resource_mapping:
                 tag[src_attr] = resource_mapping[resource_path]
                 replacement_count += 1
                 print(f"Replaced ({replacement_count}) {resource_path} -> {resource_mapping[resource_path]}")
+            elif not resource_path.startswith(('http://', 'https://', 'data:', '/')):
+                # 외부 URL이나 절대 경로가 아닌 경우만 추적
+                unmapped_resources.add(f"{tag.name}[{src_attr}]: {resource_path}")
         
         # 인라인 스타일의 url() 처리
         for tag in soup.find_all(style=True):
@@ -194,28 +238,36 @@ def parse_mhtml_file(file_path):
             # cid: URL을 포함한 모든 URL 패턴 찾기
             urls = re.findall(r'url\([\'"]?(cid:[^\'"]+|[^\'"]+)[\'"]?\)', style)
             for url in urls:
+                replaced = False
                 if url.startswith('cid:'):
                     cid_without_prefix = url[4:]
                     if cid_without_prefix in cid_mapping:  # 먼저 cid_mapping 확인
                         new_url = cid_mapping[cid_without_prefix]
                         style = style.replace(url, new_url)
                         replacement_count += 1
+                        replaced = True
                         print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
                     elif cid_without_prefix in resource_mapping:
                         new_url = resource_mapping[cid_without_prefix]
                         style = style.replace(url, new_url)
                         replacement_count += 1
+                        replaced = True
                         print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
                     elif url in resource_mapping:
                         new_url = resource_mapping[url]
                         style = style.replace(url, new_url)
                         replacement_count += 1
+                        replaced = True
                         print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
                 elif url in resource_mapping:
                     new_url = resource_mapping[url]
                     style = style.replace(url, new_url)
                     replacement_count += 1
+                    replaced = True
                     print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
+                
+                if not replaced and not url.startswith(('http://', 'https://', 'data:', '/')):
+                    unmapped_resources.add(f"style[url()]: {url}")
             tag['style'] = style
         
         # 변환된 HTML 출력 (디버깅용)
@@ -224,6 +276,13 @@ def parse_mhtml_file(file_path):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
         
         print(f"\nTotal number of resource replacements: {replacement_count}")
+        
+        # 매핑되지 않은 리소스 보고
+        if unmapped_resources:
+            print("\nUnmapped Resources Report:")
+            print("The following resources could not be mapped to local files:")
+            for resource in sorted(unmapped_resources):
+                print(f"  - {resource}")
         
         # 수정된 HTML 저장
         save_path = Path("main.html")
