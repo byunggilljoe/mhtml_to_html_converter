@@ -158,7 +158,7 @@ def parse_mhtml_file(file_path):
         replacement_count = 0
         
         # 리소스 경로 업데이트
-        for tag in soup.find_all(['img', 'script', 'link']):
+        for tag in soup.find_all(['img', 'script', 'link', 'iframe', 'frame']):
             src_attr = 'href' if tag.name == 'link' else 'src'
             resource_path = tag.get(src_attr)
             
@@ -220,7 +220,7 @@ def parse_mhtml_file(file_path):
         
         # 변환된 HTML 출력 (디버깅용)
         print("\nProcessed HTML preview:")
-        for tag in soup.find_all(['link', 'script', 'img']):
+        for tag in soup.find_all(['link', 'script', 'img', 'iframe', 'frame']):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
         
         print(f"\nTotal number of resource replacements: {replacement_count}")
@@ -235,7 +235,7 @@ def parse_mhtml_file(file_path):
         email_parser = parser.Parser()
         mhtml = email_parser.parse(f)
         
-    # 먼저 ��든 리소스를 처리하고 매핑 생성
+    # 먼저 모든 리소스를 처리하고 매핑 생성
     if mhtml.is_multipart():
         for part in mhtml.walk():
             save_content(part)
