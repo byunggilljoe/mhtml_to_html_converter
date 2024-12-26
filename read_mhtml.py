@@ -25,6 +25,7 @@ def parse_mhtml_file(file_path):
     # 리소스 매핑 딕셔너리
     resource_mapping = {}
     html_saved = False
+    html_content = None  # HTML 컨텐츠를 저장할 변수 추가
     
     # Content-ID 매핑을 위한 딕셔너리 추가
     cid_mapping = {}
@@ -46,6 +47,7 @@ def parse_mhtml_file(file_path):
 
     def save_content(part):
         nonlocal html_saved
+        nonlocal html_content  # html_content를 외부 스코프에서 사용하도록 선언
         content_type = part.get_content_type()
         content_location = part.get("Content-Location", "")
         content_id = part.get("Content-ID", "")
@@ -60,16 +62,16 @@ def parse_mhtml_file(file_path):
             return
             
         try:
-            # HTML 메인 컨텐츠 처리
+            # HTML 메인 컨텐츠는 나중에 처리하기 위해 저장
             if content_type == 'text/html' and not html_saved:
-                html_content = process_html(payload)
+                html_content = payload  # 이제 외부 변수에 저장됨
                 html_saved = True
                 return
             
             # 리소스 파일 처리
             filename = Path(content_location).name if content_location else ""
             if not filename:
-                filename = f"{uuid.uuid4()[:8]}"
+                filename = str(uuid.uuid4())[:8]  # UUID를 문자열로 변환 후 슬라이싱
             
             # URL에서 파일명만 추출 (경로와 쿼리 파라미터 제거)
             filename = filename.split('/')[-1].split('?')[0]
@@ -142,6 +144,19 @@ def parse_mhtml_file(file_path):
         
         soup = BeautifulSoup(content, 'html.parser')
         
+        # 디버깅: 매핑 정보 출력
+        print("\nResource mapping contents:")
+        print("CID Mapping:")
+        for k, v in cid_mapping.items():
+            print(f"  {k} -> {v}")
+        print("\nResource Mapping:")
+        for k, v in resource_mapping.items():
+            print(f"  {k} -> {v}")
+        print("\nStarting resource replacement...")
+        
+        # 리소스 교체 카운터 추가
+        replacement_count = 0
+        
         # 리소스 경로 업데이트
         for tag in soup.find_all(['img', 'script', 'link']):
             src_attr = 'href' if tag.name == 'link' else 'src'
@@ -155,16 +170,23 @@ def parse_mhtml_file(file_path):
             # cid: URL 처리
             if resource_path.startswith('cid:'):
                 cid_without_prefix = resource_path[4:]  # cid: 제거
-                if cid_without_prefix in resource_mapping:
+                if cid_without_prefix in cid_mapping:  # cid_mapping 사용
+                    tag[src_attr] = cid_mapping[cid_without_prefix]
+                    replacement_count += 1
+                    print(f"Replaced ({replacement_count}) {resource_path} -> {cid_mapping[cid_without_prefix]}")
+                elif cid_without_prefix in resource_mapping:
                     tag[src_attr] = resource_mapping[cid_without_prefix]
-                    print(f"Replaced {resource_path} -> {resource_mapping[cid_without_prefix]}")
+                    replacement_count += 1
+                    print(f"Replaced ({replacement_count}) {resource_path} -> {resource_mapping[cid_without_prefix]}")
                 elif resource_path in resource_mapping:
                     tag[src_attr] = resource_mapping[resource_path]
-                    print(f"Replaced {resource_path} -> {resource_mapping[resource_path]}")
+                    replacement_count += 1
+                    print(f"Replaced ({replacement_count}) {resource_path} -> {resource_mapping[resource_path]}")
             # 일반 경로 처리
             elif resource_path in resource_mapping:
                 tag[src_attr] = resource_mapping[resource_path]
-                print(f"Replaced {resource_path} -> {resource_mapping[resource_path]}")
+                replacement_count += 1
+                print(f"Replaced ({replacement_count}) {resource_path} -> {resource_mapping[resource_path]}")
         
         # 인라인 스타일의 url() 처리
         for tag in soup.find_all(style=True):
@@ -174,24 +196,34 @@ def parse_mhtml_file(file_path):
             for url in urls:
                 if url.startswith('cid:'):
                     cid_without_prefix = url[4:]
-                    if cid_without_prefix in resource_mapping:
+                    if cid_without_prefix in cid_mapping:  # 먼저 cid_mapping 확인
+                        new_url = cid_mapping[cid_without_prefix]
+                        style = style.replace(url, new_url)
+                        replacement_count += 1
+                        print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
+                    elif cid_without_prefix in resource_mapping:
                         new_url = resource_mapping[cid_without_prefix]
                         style = style.replace(url, new_url)
-                        print(f"Replaced style URL {url} -> {new_url}")
+                        replacement_count += 1
+                        print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
                     elif url in resource_mapping:
                         new_url = resource_mapping[url]
                         style = style.replace(url, new_url)
-                        print(f"Replaced style URL {url} -> {new_url}")
+                        replacement_count += 1
+                        print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
                 elif url in resource_mapping:
                     new_url = resource_mapping[url]
                     style = style.replace(url, new_url)
-                    print(f"Replaced style URL {url} -> {new_url}")
+                    replacement_count += 1
+                    print(f"Replaced ({replacement_count}) style URL {url} -> {new_url}")
             tag['style'] = style
         
         # 변환된 HTML 출력 (디버깅용)
         print("\nProcessed HTML preview:")
         for tag in soup.find_all(['link', 'script', 'img']):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
+        
+        print(f"\nTotal number of resource replacements: {replacement_count}")
         
         # 수정된 HTML 저장
         save_path = Path("main.html")
@@ -203,12 +235,21 @@ def parse_mhtml_file(file_path):
         email_parser = parser.Parser()
         mhtml = email_parser.parse(f)
         
-    # 먼저 모든 리소스를 처리하고 매핑 생성
+    # 먼저 ��든 리소스를 처리하고 매핑 생성
     if mhtml.is_multipart():
         for part in mhtml.walk():
             save_content(part)
     else:
         save_content(mhtml)
+    
+    # 모든 리소스가 처리된 후 HTML 처리
+    if html_saved and html_content:
+        print("Processing HTML content...")
+        process_html(html_content)
+        print("Processing HTML completed.")
+    else:
+        print("No HTML content found or processing failed.")
+        print(html_saved, html_content is None)
 
 # 사용 예시
 if __name__ == "__main__":
