@@ -99,7 +99,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
             return None
             
         try:
-            # 상대 URL인 경우 절대 URL로 변환
+            # 상대 URL인 경우 절��� URL로 변환
             if base_url and not urlparse(font_url).netloc:
                 font_url = urljoin(base_url, font_url)
             
@@ -295,23 +295,24 @@ def parse_mhtml_file(file_path, download_fonts=True):
             
             # 리소스 매핑 저장
             if save_path:
-                relative_save_path = str(save_path)
-                if os.path.sep == '\\':
-                    relative_save_path = relative_save_path.replace('\\', '/')
+                # 상대 경로로 변환 (output_dir 기준)
+                relative_path = os.path.relpath(save_path, output_dir)
+                # Windows 경로를 웹 스타일 경로로 변환
+                relative_path = relative_path.replace('\\', '/')
                 
                 # 일반 경로 매핑
                 if original_path:
-                    resource_mapping[original_path] = relative_save_path
-                    print(f"Mapped path: {original_path} -> {relative_save_path}")
+                    resource_mapping[original_path] = relative_path
+                    print(f"Mapped path: {original_path} -> {relative_path}")
                 
-                # Content-ID 매핑 (cid: 제거된 버전도 함께 저장)
+                # Content-ID 매핑
                 if content_id:
                     cid_url = f"cid:{content_id}"
-                    resource_mapping[cid_url] = relative_save_path
-                    resource_mapping[content_id] = relative_save_path  # cid: 없는 버전도 매핑
-                    cid_mapping[content_id] = relative_save_path
-                    print(f"Mapped CID: {cid_url} -> {relative_save_path}")
-                    print(f"Mapped CID (without prefix): {content_id} -> {relative_save_path}")
+                    resource_mapping[cid_url] = relative_path
+                    resource_mapping[content_id] = relative_path
+                    cid_mapping[content_id] = relative_path
+                    print(f"Mapped CID: {cid_url} -> {relative_path}")
+                    print(f"Mapped CID (without prefix): {content_id} -> {relative_path}")
                     
         except Exception as e:
             print(f"Error processing content: {e}\n")
@@ -556,22 +557,22 @@ def parse_mhtml_file(file_path, download_fonts=True):
 
 # 사용 예시
 if __name__ == "__main__":
-    # base_dir = Path(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back")
+    base_dir = Path(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back")
     
-    # # 모든 original.mhtml 파일 찾기
-    # mhtml_files = list(base_dir.rglob("original.mhtml"))
+    # 모든 original.mhtml 파일 찾기
+    mhtml_files = list(base_dir.rglob("original.mhtml"))
     
-    # print(f"Found {len(mhtml_files)} original.mhtml files")
+    print(f"Found {len(mhtml_files)} original.mhtml files")
 
-    # # 각 파일 처리
-    # for i, mhtml_file in enumerate(mhtml_files, 1):
-    #     try:
-    #         print(f"\nProcessing file {i}/{len(mhtml_files)}: {mhtml_file}")
-    #         parse_mhtml_file(mhtml_file, download_fonts=False)
-    #         print(f"Successfully processed: {mhtml_file}")
-    #     except Exception as e:
-    #         print(f"Error processing {mhtml_file}: {str(e)}")
+    # 각 파일 처리
+    for i, mhtml_file in enumerate(mhtml_files, 1):
+        try:
+            print(f"\nProcessing file {i}/{len(mhtml_files)}: {mhtml_file}")
+            parse_mhtml_file(mhtml_file, download_fonts=False)
+            print(f"Successfully processed: {mhtml_file}")
+        except Exception as e:
+            print(f"Error processing {mhtml_file}: {str(e)}")
     
-    # for i, mhtml_file in enumerate(mhtml_files, 1):
-    #     print(mhtml_file)
-    parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\36\original.mhtml", download_fonts=False)
+    for i, mhtml_file in enumerate(mhtml_files, 1):
+        print(mhtml_file)
+    # parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\43\original.mhtml", download_fonts=False)
