@@ -49,24 +49,47 @@ def parse_mhtml_file(file_path, download_fonts=True):
     total_replacement_count = 0
     
     def sanitize_filename(filename):
+        # URL 디코딩 시도
+        try:
+            from urllib.parse import unquote
+            filename = unquote(filename)
+        except:
+            pass
+        
         # 쿼리 파라미터 제거 (?로 시작하는 부분)
         filename = filename.split('?')[0]
+        
+        # %로 시작하는 URL 인코딩된 문자 제거
+        filename = re.sub(r'%[0-9a-fA-F]{2}', '', filename)
         
         # 파일 확장자 분리
         name, ext = os.path.splitext(filename)
         
+        # URL의 마지막 의미있는 부분만 추출
+        name = name.split('/')[-1]
+        name = name.split('\\')[-1]  # 백슬래시로도 분리
+        
         # 파일명 길이 제한 (확장자 제외)
-        if len(name) > 50:  # 적절한 길이로 제한
-            name = name[:50]
+        if len(name) > 30:  # 더 짧게 제한
+            name = name[:30]
         
         # 유효한 파일명 문자만 허용
         valid_chars = f"-_.{string.ascii_letters}{string.digits}"
         # 유효하지 않은 문자를 '_'로 변경
         sanitized_name = ''.join(c if c in valid_chars else '_' for c in name)
-        # 빈 파일명인 경우 UUID 생성
-        if not sanitized_name:
+        
+        # 빈 파일명이거나 모두 특수문자인 경우 UUID 생성
+        if not sanitized_name or sanitized_name.replace('_', '') == '':
             sanitized_name = str(uuid.uuid4())[:8]
-        return f"{sanitized_name}{ext}"
+        
+        # 최종 파일명 생성
+        final_name = f"{sanitized_name}{ext}"
+        
+        # 디버깅을 위한 로그
+        if len(filename) > 50:  # 원본 파일명이 긴 경우에만 로그 출력
+            print(f"Sanitized filename: {filename} -> {final_name}")
+        
+        return final_name
 
     def download_web_font(font_url, base_url=None):
         """웹 폰트를 다운로드하고 로컬에 저장"""
@@ -96,7 +119,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
                 # 파일명 정리
                 sanitized_filename = sanitize_filename(filename)
                 if not any(sanitized_filename.endswith(ext) for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
-                    # Content-Type에서 확장자 추출 시도
+                    # Content-Type에서 확장자 추�� 시도
                     content_type = response.headers.get('Content-Type', '')
                     if 'woff2' in content_type:
                         sanitized_filename = f"{sanitized_filename}.woff2"
@@ -224,11 +247,14 @@ def parse_mhtml_file(file_path, download_fonts=True):
                 if not sanitized_filename.endswith(tuple(['.jpg','.jpeg','.png','.gif','.webp','.svg'])):
                     if 'svg' in content_type:
                         sanitized_filename = f"{sanitized_filename}.svg"
+                    elif 'gif' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.gif"
                     else:
                         ext = f".{content_type.split('/')[-1]}"
                         sanitized_filename = f"{sanitized_filename}{ext}"
                 save_path = image_dir / sanitized_filename
                 save_path.write_bytes(payload)
+                print(f"Saved image file: {save_path}")
                 
             elif 'css' in content_type or filename.endswith('.css'):
                 if not sanitized_filename.endswith('.css'):
@@ -342,7 +368,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
             
             # cid: URL 처리
             if resource_path.startswith('cid:'):
-                cid_without_prefix = resource_path[4:]  # cid: 제거
+                cid_without_prefix = resource_path[4:]  # cid: 제��
                 if cid_without_prefix in cid_mapping:  # cid_mapping 사용
                     tag[src_attr] = cid_mapping[cid_without_prefix]
                     replacement_count += 1
@@ -410,7 +436,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
         
         print(f"\nResource replacements in this file: {replacement_count}")
-        total_replacement_count += replacement_count  # 전체 카운터에 추가
+        total_replacement_count += replacement_count  # 전체 카운터�� 추가
         
         # 매핑되지 않은 리소스 보고
         if unmapped_resources:
@@ -516,22 +542,22 @@ def parse_mhtml_file(file_path, download_fonts=True):
 
 # 사용 예시
 if __name__ == "__main__":
-    base_dir = Path(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back")
+    # base_dir = Path(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back")
     
-    # 모든 original.mhtml 파일 찾기
-    mhtml_files = list(base_dir.rglob("original.mhtml"))
+    # # 모든 original.mhtml 파일 찾기
+    # mhtml_files = list(base_dir.rglob("original.mhtml"))
     
-    print(f"Found {len(mhtml_files)} original.mhtml files")
+    # print(f"Found {len(mhtml_files)} original.mhtml files")
 
-    # 각 파일 처리
-    for i, mhtml_file in enumerate(mhtml_files, 1):
-        try:
-            print(f"\nProcessing file {i}/{len(mhtml_files)}: {mhtml_file}")
-            parse_mhtml_file(mhtml_file, download_fonts=False)
-            print(f"Successfully processed: {mhtml_file}")
-        except Exception as e:
-            print(f"Error processing {mhtml_file}: {str(e)}")
+    # # 각 파일 처리
+    # for i, mhtml_file in enumerate(mhtml_files, 1):
+    #     try:
+    #         print(f"\nProcessing file {i}/{len(mhtml_files)}: {mhtml_file}")
+    #         parse_mhtml_file(mhtml_file, download_fonts=False)
+    #         print(f"Successfully processed: {mhtml_file}")
+    #     except Exception as e:
+    #         print(f"Error processing {mhtml_file}: {str(e)}")
     
-    for i, mhtml_file in enumerate(mhtml_files, 1):
-        print(mhtml_file)
-    
+    # for i, mhtml_file in enumerate(mhtml_files, 1):
+    #     print(mhtml_file)
+    parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\24\original.mhtml", download_fonts=False)
