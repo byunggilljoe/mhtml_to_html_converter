@@ -31,6 +31,9 @@ def parse_mhtml_file(file_path):
     # Content-ID 매핑을 위한 딕셔너리 추가
     cid_mapping = {}
     
+    # 추가 HTML 파일들을 저장할 리스트
+    additional_html_files = []  # [(payload, save_path, original_path, content_id), ...]
+    
     def sanitize_filename(filename):
         # 쿼리 파라미터 제거 (?로 시작하는 부분)
         filename = filename.split('?')[0]
@@ -53,7 +56,8 @@ def parse_mhtml_file(file_path):
 
     def save_content(part):
         nonlocal html_saved
-        nonlocal html_content  # html_content를 외부 스코프에서 사용하도록 선언
+        nonlocal html_content
+        nonlocal additional_html_files  # additional_html_files를 외부 스코프에서 사용
         content_type = part.get_content_type()
         content_location = part.get("Content-Location", "")
         content_id = part.get("Content-ID", "")
@@ -68,14 +72,14 @@ def parse_mhtml_file(file_path):
             return
             
         try:
-            # HTML 메인 컨텐츠��� 나중에 처리하기 위해 저장
+            # HTML 메인 컨텐츠 나중에 처리하기 위해 저장
             if content_type == 'text/html':
                 if not html_saved:
-                    html_content = payload  # 이제 외부 변수에 저장됨
+                    html_content = payload
                     html_saved = True
                     return
                 else:
-                    # 추가 HTML 파일들은 리소스로 저장
+                    # 추가 HTML 파일들은 나중에 처리하기 위해 저장
                     filename = Path(content_location).name if content_location else ""
                     if not filename:
                         filename = str(uuid.uuid4())[:8]
@@ -88,11 +92,13 @@ def parse_mhtml_file(file_path):
                     if not sanitized_filename.endswith('.html'):
                         sanitized_filename = f"{sanitized_filename}.html"
                     
-                    # HTML 파일을 html 디렉토리에 저장
+                    # HTML 파일 경로 설정
                     save_path = html_dir / sanitized_filename
-                    save_path.write_bytes(payload)
                     
-                    # 리소스 매핑 저장
+                    # 나중에 처리하기 위해 정보 저장
+                    additional_html_files.append((payload, save_path, original_path, content_id))
+                    
+                    # 리소스 매핑 저장 (파일 경로만)
                     relative_save_path = str(save_path)
                     if os.path.sep == '\\':
                         relative_save_path = relative_save_path.replace('\\', '/')
@@ -110,6 +116,7 @@ def parse_mhtml_file(file_path):
                         cid_mapping[content_id] = relative_save_path
                         print(f"Mapped HTML CID: {cid_url} -> {relative_save_path}")
                         print(f"Mapped HTML CID (without prefix): {content_id} -> {relative_save_path}")
+                    return
             
             # 리소스 파일 처리
             filename = Path(content_location).name if content_location else ""
@@ -309,13 +316,65 @@ def parse_mhtml_file(file_path):
     
     # 모든 리소스가 처리된 후 HTML 처리
     if html_saved and html_content:
-        print("Processing HTML content...")
+        print("Processing main HTML content...")
         process_html(html_content)
-        print("Processing HTML completed.")
+        print("Processing main HTML completed.")
+        
+        # 추가 HTML 파일들 처리
+        print("\nProcessing additional HTML files...")
+        for payload, save_path, original_path, content_id in additional_html_files:
+            try:
+                content = payload.decode('utf-8', errors='ignore')
+                soup = BeautifulSoup(content, 'html.parser')
+                
+                # 리소스 경로 업데이트
+                for tag in soup.find_all(['img', 'script', 'link', 'iframe', 'frame']):
+                    src_attr = 'href' if tag.name == 'link' else 'src'
+                    resource_path = tag.get(src_attr)
+                    
+                    if not resource_path:
+                        continue
+                    
+                    if resource_path.startswith('cid:'):
+                        cid_without_prefix = resource_path[4:]
+                        if cid_without_prefix in cid_mapping:
+                            tag[src_attr] = cid_mapping[cid_without_prefix]
+                        elif cid_without_prefix in resource_mapping:
+                            tag[src_attr] = resource_mapping[cid_without_prefix]
+                        elif resource_path in resource_mapping:
+                            tag[src_attr] = resource_mapping[resource_path]
+                    elif resource_path in resource_mapping:
+                        tag[src_attr] = resource_mapping[resource_path]
+                
+                # 인라인 스타일의 url() 처리
+                for tag in soup.find_all(style=True):
+                    style = tag['style']
+                    urls = re.findall(r'url\([\'"]?(cid:[^\'"]+|[^\'"]+)[\'"]?\)', style)
+                    for url in urls:
+                        if url.startswith('cid:'):
+                            cid_without_prefix = url[4:]
+                            if cid_without_prefix in cid_mapping:
+                                style = style.replace(url, cid_mapping[cid_without_prefix])
+                            elif cid_without_prefix in resource_mapping:
+                                style = style.replace(url, resource_mapping[cid_without_prefix])
+                            elif url in resource_mapping:
+                                style = style.replace(url, resource_mapping[url])
+                        elif url in resource_mapping:
+                            style = style.replace(url, resource_mapping[url])
+                    tag['style'] = style
+                
+                # 수정된 HTML 저장
+                save_path.write_text(str(soup), encoding='utf-8')
+                print(f"Processed and saved HTML file: {save_path}")
+            except Exception as e:
+                print(f"Warning: Failed to process HTML content: {e}")
+                # 실패하면 원본 그대로 저장
+                save_path.write_bytes(payload)
+                print(f"Saved original HTML content: {save_path}")
+        print("Processing additional HTML files completed.")
     else:
         print("No HTML content found or processing failed.")
         print(html_saved, html_content is None)
-    import pdb; pdb.set_trace()
 
 # 사용 예시
 if __name__ == "__main__":
