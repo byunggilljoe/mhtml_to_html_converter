@@ -34,6 +34,9 @@ def parse_mhtml_file(file_path):
     # 추가 HTML 파일들을 저장할 리스트
     additional_html_files = []  # [(payload, save_path, original_path, content_id), ...]
     
+    # 전체 리소스 교체 카운터
+    total_replacement_count = 0
+    
     def sanitize_filename(filename):
         # 쿼리 파라미터 제거 (?로 시작하는 부분)
         filename = filename.split('?')[0]
@@ -95,7 +98,7 @@ def parse_mhtml_file(file_path):
                     # HTML 파일 경로 설정
                     save_path = html_dir / sanitized_filename
                     
-                    # 나중에 처리하기 위해 정보 저장
+                    # 나중에 처���하기 위해 정보 저장
                     additional_html_files.append((payload, save_path, original_path, content_id))
                     
                     # 리소스 매핑 저장 (파일 경로만)
@@ -181,6 +184,7 @@ def parse_mhtml_file(file_path):
             exit(0)
 
     def process_html(payload):
+        nonlocal total_replacement_count  # 전역 카운터 사용
         # HTML 디코딩
         detected = chardet.detect(payload)
         try:
@@ -288,7 +292,8 @@ def parse_mhtml_file(file_path):
         for tag in soup.find_all(['link', 'script', 'img', 'iframe', 'frame']):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
         
-        print(f"\nTotal number of resource replacements: {replacement_count}")
+        print(f"\nResource replacements in this file: {replacement_count}")
+        total_replacement_count += replacement_count  # 전체 카운터에 추가
         
         # 매핑되지 않은 리소스 보고
         if unmapped_resources:
@@ -327,6 +332,9 @@ def parse_mhtml_file(file_path):
                 content = payload.decode('utf-8', errors='ignore')
                 soup = BeautifulSoup(content, 'html.parser')
                 
+                # 이 파일의 리소스 교체 카운터
+                file_replacement_count = 0
+                
                 # 리소스 경로 업데이트
                 for tag in soup.find_all(['img', 'script', 'link', 'iframe', 'frame']):
                     src_attr = 'href' if tag.name == 'link' else 'src'
@@ -339,12 +347,16 @@ def parse_mhtml_file(file_path):
                         cid_without_prefix = resource_path[4:]
                         if cid_without_prefix in cid_mapping:
                             tag[src_attr] = cid_mapping[cid_without_prefix]
+                            file_replacement_count += 1
                         elif cid_without_prefix in resource_mapping:
                             tag[src_attr] = resource_mapping[cid_without_prefix]
+                            file_replacement_count += 1
                         elif resource_path in resource_mapping:
                             tag[src_attr] = resource_mapping[resource_path]
+                            file_replacement_count += 1
                     elif resource_path in resource_mapping:
                         tag[src_attr] = resource_mapping[resource_path]
+                        file_replacement_count += 1
                 
                 # 인라인 스타일의 url() 처리
                 for tag in soup.find_all(style=True):
@@ -355,23 +367,32 @@ def parse_mhtml_file(file_path):
                             cid_without_prefix = url[4:]
                             if cid_without_prefix in cid_mapping:
                                 style = style.replace(url, cid_mapping[cid_without_prefix])
+                                file_replacement_count += 1
                             elif cid_without_prefix in resource_mapping:
                                 style = style.replace(url, resource_mapping[cid_without_prefix])
+                                file_replacement_count += 1
                             elif url in resource_mapping:
                                 style = style.replace(url, resource_mapping[url])
+                                file_replacement_count += 1
                         elif url in resource_mapping:
                             style = style.replace(url, resource_mapping[url])
+                            file_replacement_count += 1
                     tag['style'] = style
                 
                 # 수정된 HTML 저장
                 save_path.write_text(str(soup), encoding='utf-8')
                 print(f"Processed and saved HTML file: {save_path}")
+                print(f"Resource replacements in this file: {file_replacement_count}")
+                total_replacement_count += file_replacement_count  # 전체 카운터에 추가
             except Exception as e:
                 print(f"Warning: Failed to process HTML content: {e}")
                 # 실패하면 원본 그대로 저장
                 save_path.write_bytes(payload)
                 print(f"Saved original HTML content: {save_path}")
         print("Processing additional HTML files completed.")
+        
+        # 모든 처리가 끝난 후 총 교체 수 출력
+        print(f"\nTotal number of resource replacements across all HTML files: {total_replacement_count}")
     else:
         print("No HTML content found or processing failed.")
         print(html_saved, html_content is None)
