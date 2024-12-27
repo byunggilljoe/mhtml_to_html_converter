@@ -7,6 +7,8 @@ import re
 import string
 import uuid
 import os
+import requests  # 웹 폰트 다운로드를 위해 추가
+from urllib.parse import urljoin, urlparse  # URL 처리를 위해 추가
 
 def parse_mhtml_file(file_path):
     # MHTML 파일 경로
@@ -17,10 +19,11 @@ def parse_mhtml_file(file_path):
     image_dir = resource_dir / "image"
     css_dir = resource_dir / "css"
     js_dir = resource_dir / "javascript"
-    html_dir = resource_dir / "html"  # HTML 디렉토리 추가
+    html_dir = resource_dir / "html"
+    font_dir = resource_dir / "font"  # 폰트 디렉토리 추가
     
     # 필요한 디렉토리 생성
-    for dir_path in [resource_dir, image_dir, css_dir, js_dir, html_dir]:  # html_dir 추가
+    for dir_path in [resource_dir, image_dir, css_dir, js_dir, html_dir, font_dir]:  # font_dir 추가
         dir_path.mkdir(exist_ok=True)
     
     # 리소스 매핑 딕셔너리
@@ -56,6 +59,66 @@ def parse_mhtml_file(file_path):
         if not sanitized_name:
             sanitized_name = str(uuid.uuid4())[:8]
         return f"{sanitized_name}{ext}"
+
+    def download_web_font(font_url, base_url=None):
+        """웹 폰트를 다운로드하고 로컬에 저장"""
+        try:
+            # 상대 URL인 경우 절대 URL로 변환
+            if base_url and not urlparse(font_url).netloc:
+                font_url = urljoin(base_url, font_url)
+            
+            # 이미 다운로드된 폰트인지 확인
+            if font_url in resource_mapping:
+                print(f"Font already downloaded: {font_url}")
+                return resource_mapping[font_url]
+            
+            # 폰트 다운로드
+            response = requests.get(font_url, allow_redirects=True)
+            if response.status_code == 200:
+                # 파일명 생성
+                url_path = urlparse(font_url).path
+                filename = os.path.basename(url_path)
+                if not filename:
+                    filename = str(uuid.uuid4())[:8]
+                
+                # 파일명 정리
+                sanitized_filename = sanitize_filename(filename)
+                if not any(sanitized_filename.endswith(ext) for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+                    # Content-Type에서 확장자 추출 시도
+                    content_type = response.headers.get('Content-Type', '')
+                    if 'woff2' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.woff2"
+                    elif 'woff' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.woff"
+                    elif 'ttf' in content_type or 'truetype' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.ttf"
+                    elif 'opentype' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.otf"
+                    elif 'embedded-opentype' in content_type:
+                        sanitized_filename = f"{sanitized_filename}.eot"
+                    else:
+                        # 확장자를 추측할 수 없는 경우 woff2 사용
+                        sanitized_filename = f"{sanitized_filename}.woff2"
+                
+                # 폰트 파일 저장
+                save_path = font_dir / sanitized_filename
+                save_path.write_bytes(response.content)
+                
+                # 상대 경로로 변환
+                relative_save_path = str(save_path)
+                if os.path.sep == '\\':
+                    relative_save_path = relative_save_path.replace('\\', '/')
+                
+                # 리소스 매핑에 추가
+                resource_mapping[font_url] = relative_save_path
+                print(f"Downloaded and saved font: {font_url} -> {relative_save_path}")
+                return relative_save_path
+            else:
+                print(f"Failed to download font: {font_url} (Status code: {response.status_code})")
+                return None
+        except Exception as e:
+            print(f"Error downloading font: {font_url} - {str(e)}")
+            return None
 
     def save_content(part):
         nonlocal html_saved
@@ -98,7 +161,7 @@ def parse_mhtml_file(file_path):
                     # HTML 파일 경로 설정
                     save_path = html_dir / sanitized_filename
                     
-                    # 나중에 처���하기 위해 정보 저장
+                    # 나중에 처리하기 위해 정보 저장
                     additional_html_files.append((payload, save_path, original_path, content_id))
                     
                     # 리소스 매핑 저장 (파일 경로만)
@@ -134,7 +197,18 @@ def parse_mhtml_file(file_path):
             save_path = None
             
             # 리소스 타입별 저장
-            if 'image' in content_type:
+            if 'font' in content_type or any(filename.endswith(ext) for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+                # 폰트 파일 확장자 처리
+                if not any(sanitized_filename.endswith(ext) for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+                    ext = f".{content_type.split('/')[-1]}"
+                    if ext == '.vnd.ms-fontobject':
+                        ext = '.eot'
+                    sanitized_filename = f"{sanitized_filename}{ext}"
+                save_path = font_dir / sanitized_filename
+                save_path.write_bytes(payload)
+                print(f"Saved font file: {save_path}")
+                
+            elif 'image' in content_type:
                 if not sanitized_filename.endswith(tuple(['.jpg','.jpeg','.png','.gif','.webp','.svg'])):
                     if 'svg' in content_type:
                         sanitized_filename = f"{sanitized_filename}.svg"
@@ -148,7 +222,38 @@ def parse_mhtml_file(file_path):
                 if not sanitized_filename.endswith('.css'):
                     sanitized_filename = f"{sanitized_filename}.css"
                 save_path = css_dir / sanitized_filename
-                save_path.write_bytes(payload)
+                
+                # CSS 파일에서 폰트 URL 찾기
+                try:
+                    css_content = payload.decode('utf-8', errors='ignore')
+                    # @font-face 규칙에서 src: url() 찾기
+                    font_urls = re.findall(r'url\([\'"]?([^\'"]+\.(?:woff2?|ttf|eot|otf))[\'"]?\)', css_content)
+                    
+                    # 발견된 각 폰트 URL에 대해 처리
+                    for font_url in font_urls:
+                        print(f"Found font reference in CSS: {font_url}")
+                        local_path = download_web_font(font_url, content_location)
+                        if local_path:
+                            # CSS 내용의 폰트 URL을 로컬 경로로 교체
+                            css_content = css_content.replace(font_url, local_path)
+                    
+                    # 수정된 CSS 저장
+                    save_path.write_text(css_content, encoding='utf-8')
+                except Exception as e:
+                    print(f"Warning: Failed to process CSS content for font detection: {e}")
+                    save_path.write_bytes(payload)
+                
+                # CSS 파일에서 폰트 URL 찾기
+                try:
+                    css_content = payload.decode('utf-8', errors='ignore')
+                    # @font-face 규칙에서 src: url() 찾기
+                    font_urls = re.findall(r'url\([\'"]?([^\'"]+\.(?:woff2?|ttf|eot|otf))[\'"]?\)', css_content)
+                    for font_url in font_urls:
+                        print(f"Found font reference in CSS: {font_url}")
+                        if font_url in resource_mapping:
+                            print(f"Font already mapped: {font_url} -> {resource_mapping[font_url]}")
+                except Exception as e:
+                    print(f"Warning: Failed to process CSS content for font detection: {e}")
                 
             elif 'javascript' in content_type or content_location.endswith('.js'):
                 if not sanitized_filename.endswith('.js'):
