@@ -56,8 +56,9 @@ def parse_mhtml_file(file_path, download_fonts=True):
         except:
             pass
         
-        # 쿼리 파라미터 제거 (?로 시작하는 부분)
-        filename = filename.split('?')[0]
+        # 쿼리 파라미터와 해시 제거 (#, ? 이후 부분 제거)
+        filename = filename.split('#')[0]  # 해시 제거
+        filename = filename.split('?')[0]  # 쿼리 파라미터 제거
         
         # %로 시작하는 URL 인코딩된 문자 제거
         filename = re.sub(r'%[0-9a-fA-F]{2}', '', filename)
@@ -119,7 +120,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
                 # 파일명 정리
                 sanitized_filename = sanitize_filename(filename)
                 if not any(sanitized_filename.endswith(ext) for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
-                    # Content-Type에서 확장자 추�� 시도
+                    # Content-Type에서 확장자 추측 시도
                     content_type = response.headers.get('Content-Type', '')
                     if 'woff2' in content_type:
                         sanitized_filename = f"{sanitized_filename}.woff2"
@@ -183,12 +184,9 @@ def parse_mhtml_file(file_path, download_fonts=True):
                     # 추가 HTML 파일들은 나중에 처리하기 위해 저장
                     filename = Path(content_location).name if content_location else ""
                     if not filename:
-                        filename = str(uuid.uuid4())[:8]
+                        filename = str(uuid.uuid4())[:8] + ".html"
                     
-                    # URL에서 파일명만 추출 (경로와 쿼리 파라미터 제거)
-                    filename = filename.split('/')[-1].split('?')[0]
-                    
-                    # 파일명 정리
+                    # sanitize_filename 함수를 사용하여 파일명 정리
                     sanitized_filename = sanitize_filename(filename)
                     if not sanitized_filename.endswith('.html'):
                         sanitized_filename = f"{sanitized_filename}.html"
@@ -200,7 +198,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
                     additional_html_files.append((payload, save_path, original_path, content_id))
                     
                     # 리소스 매핑 저장 (파일 경로만)
-                    relative_save_path = str(save_path)
+                    relative_save_path = os.path.relpath(save_path, output_dir)
                     if os.path.sep == '\\':
                         relative_save_path = relative_save_path.replace('\\', '/')
                     
@@ -261,24 +259,20 @@ def parse_mhtml_file(file_path, download_fonts=True):
                     sanitized_filename = f"{sanitized_filename}.css"
                 save_path = css_dir / sanitized_filename
                 
-                # CSS 파일에서 폰트 URL 찾기 - DOWNLOAD_FONTS 플래그 확인
-                if DOWNLOAD_FONTS:
-                    try:
-                        css_content = payload.decode('utf-8', errors='ignore')
+                try:
+                    css_content = payload.decode('utf-8', errors='ignore')
+                    # 폰트 URL 처리 (DOWNLOAD_FONTS가 활성화된 경우)
+                    if DOWNLOAD_FONTS:
                         font_urls = re.findall(r'url\([\'"]?([^\'"]+\.(?:woff2?|ttf|eot|otf))[\'"]?\)', css_content)
-                        
                         for font_url in font_urls:
-                            print(f"Found font reference in CSS: {font_url}")
                             local_path = download_web_font(font_url, content_location)
                             if local_path:
                                 css_content = css_content.replace(font_url, local_path)
-                        
-                        save_path.write_text(css_content, encoding='utf-8')
-                    except Exception as e:
-                        print(f"Warning: Failed to process CSS content for font detection: {e}")
-                        save_path.write_bytes(payload)
-                else:
-                    # 폰트 다운로드가 비활성화된 경우 CSS 파일을 그대로 저장
+                    
+                    # CSS 파일 임시 저장
+                    save_path.write_text(css_content, encoding='utf-8')
+                except Exception as e:
+                    print(f"Warning: Failed to process CSS content: {e}")
                     save_path.write_bytes(payload)
                 
                 # CSS 파일에서 폰트 URL 찾기
@@ -342,6 +336,26 @@ def parse_mhtml_file(file_path, download_fonts=True):
         
         soup = BeautifulSoup(content, 'html.parser')
         
+        # CSS 파일을 style 태그로 임베드
+        for link in soup.find_all('link', rel='stylesheet'):
+            href = link.get('href')
+            if href and href in resource_mapping:
+                css_path = output_dir / resource_mapping[href]
+                try:
+                    if css_path.exists():
+                        # CSS 파일 내용 읽기
+                        css_content = css_path.read_text(encoding='utf-8')
+                        # style 태그 생성
+                        style_tag = soup.new_tag('style')
+                        style_tag.string = css_content
+                        # link 태그를 style 태그로 교체
+                        link.replace_with(style_tag)
+                        # CSS 파일 삭제 (선택사항)
+                        css_path.unlink()
+                        print(f"Embedded CSS file: {href}")
+                except Exception as e:
+                    print(f"Failed to embed CSS file {href}: {e}")
+        
         # 디버깅: 매핑 정보 출력
         print("\nResource mapping contents:")
         print("CID Mapping:")
@@ -368,7 +382,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
             
             # cid: URL 처리
             if resource_path.startswith('cid:'):
-                cid_without_prefix = resource_path[4:]  # cid: 제��
+                cid_without_prefix = resource_path[4:]  # cid: 제거
                 if cid_without_prefix in cid_mapping:  # cid_mapping 사용
                     tag[src_attr] = cid_mapping[cid_without_prefix]
                     replacement_count += 1
@@ -436,7 +450,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
             print(f"{tag.name}: {tag.get('href') or tag.get('src')}")
         
         print(f"\nResource replacements in this file: {replacement_count}")
-        total_replacement_count += replacement_count  # 전체 카운터�� 추가
+        total_replacement_count += replacement_count  # 전체 카운터에 추가
         
         # 매핑되지 않은 리소스 보고
         if unmapped_resources:
@@ -560,4 +574,4 @@ if __name__ == "__main__":
     
     # for i, mhtml_file in enumerate(mhtml_files, 1):
     #     print(mhtml_file)
-    parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\24\original.mhtml", download_fonts=False)
+    parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\36\original.mhtml", download_fonts=False)
