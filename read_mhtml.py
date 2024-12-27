@@ -35,10 +35,15 @@ def parse_mhtml_file(file_path):
         # 쿼리 파라미터 제거 (?로 시작하는 부분)
         filename = filename.split('?')[0]
         
-        # 유효한 파일명 문자만 허용
-        valid_chars = f"-_.{string.ascii_letters}{string.digits}"
         # 파일 확장자 분리
         name, ext = os.path.splitext(filename)
+        
+        # 파일명 길이 제한 (확장자 제외)
+        if len(name) > 50:  # 적절한 길이로 제한
+            name = name[:50]
+        
+        # 유효한 파일명 문자만 허용
+        valid_chars = f"-_.{string.ascii_letters}{string.digits}"
         # 유효하지 않은 문자를 '_'로 변경
         sanitized_name = ''.join(c if c in valid_chars else '_' for c in name)
         # 빈 파일명인 경우 UUID 생성
@@ -63,7 +68,7 @@ def parse_mhtml_file(file_path):
             return
             
         try:
-            # HTML 메인 컨텐츠는 나중에 처리하기 위해 저장
+            # HTML 메인 컨텐츠��� 나중에 처리하기 위해 저장
             if content_type == 'text/html':
                 if not html_saved:
                     html_content = payload  # 이제 외부 변수에 저장됨
@@ -85,7 +90,7 @@ def parse_mhtml_file(file_path):
                     
                     # HTML 파일을 html 디렉토리에 저장
                     save_path = html_dir / sanitized_filename
-                    save_path.write_text(payload.decode('utf-8', errors='ignore'))
+                    save_path.write_bytes(payload)
                     
                     # 리소스 매핑 저장
                     relative_save_path = str(save_path)
@@ -133,7 +138,7 @@ def parse_mhtml_file(file_path):
                 if not sanitized_filename.endswith('.css'):
                     sanitized_filename = f"{sanitized_filename}.css"
                 save_path = css_dir / sanitized_filename
-                save_path.write_text(payload.decode('utf-8', errors='ignore'))
+                save_path.write_bytes(payload)
                 
             elif 'javascript' in content_type or content_location.endswith('.js'):
                 if not sanitized_filename.endswith('.js'):
@@ -166,6 +171,7 @@ def parse_mhtml_file(file_path):
             print(f"Failed content type: {content_type}")
             print(f"Original path: {original_path}")
             print(f"Content-ID: {content_id}")
+            exit(0)
 
     def process_html(payload):
         # HTML 디코딩
@@ -309,6 +315,7 @@ def parse_mhtml_file(file_path):
     else:
         print("No HTML content found or processing failed.")
         print(html_saved, html_content is None)
+    import pdb; pdb.set_trace()
 
 # 사용 예시
 if __name__ == "__main__":
