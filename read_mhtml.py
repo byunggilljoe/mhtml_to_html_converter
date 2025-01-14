@@ -49,47 +49,20 @@ def parse_mhtml_file(file_path, download_fonts=True):
     total_replacement_count = 0
     
     def sanitize_filename(filename):
-        # URL 디코딩 시도
-        try:
-            from urllib.parse import unquote
-            filename = unquote(filename)
-        except:
-            pass
+        # 파일명에서 확장자만 추출
         
-        # 쿼리 파라미터와 해시 제거 (#, ? 이후 부분 제거)
-        filename = filename.split('#')[0]  # 해시 제거
-        filename = filename.split('?')[0]  # 쿼리 파라미터 제거
+        # UUID 생성
+        sanitized_name = str(uuid.uuid4())[:8]
+        print("sanitized name:", sanitized_name)
+        # 최종 파일명 생성 (UUID + 확장자)
+        final_name = f"{sanitized_name}"
         
-        # %로 시작하는 URL 인코딩된 문자 제거
-        filename = re.sub(r'%[0-9a-fA-F]{2}', '', filename)
-        
-        # 파일 확장자 분리
-        name, ext = os.path.splitext(filename)
-        
-        # URL의 마지막 의미있는 부분만 추출
-        name = name.split('/')[-1]
-        name = name.split('\\')[-1]  # 백슬래시로도 분리
-        
-        # 파일명 길이 제한 (확장자 제외)
-        if len(name) > 30:  # 더 짧게 제한
-            name = name[:30]
-        
-        # 유효한 파일명 문자만 허용
-        valid_chars = f"-_.{string.ascii_letters}{string.digits}"
-        # 유효하지 않은 문자를 '_'로 변경
-        sanitized_name = ''.join(c if c in valid_chars else '_' for c in name)
-        
-        # 빈 파일명이거나 모두 특수문자인 경우 UUID 생성
-        if not sanitized_name or sanitized_name.replace('_', '') == '':
+        # 파일이 이미 존재하는지 확인하고, 존재하면 파일이름 생성을 다시 시도
+        while os.path.exists(final_name):
             sanitized_name = str(uuid.uuid4())[:8]
-        
-        # 최종 파일명 생성
-        final_name = f"{sanitized_name}{ext}"
-        
-        # 디버깅을 위한 로그
-        if len(filename) > 50:  # 원본 파일명이 긴 경우에만 로그 출력
-            print(f"Sanitized filename: {filename} -> {final_name}")
-        
+            final_name = f"{sanitized_name}"
+
+        print("sanitized fin name:", final_name)
         return final_name
 
     def download_web_font(font_url, base_url=None):
@@ -226,7 +199,8 @@ def parse_mhtml_file(file_path, download_fonts=True):
             filename = filename.split('/')[-1].split('?')[0]
             
             # 파일명 정리
-            sanitized_filename = sanitize_filename(filename)
+            sanitized_filename = sanitize_filename(str(filename))
+            print("[*] sanitized_filename:", sanitized_filename, filename)
             save_path = None
             
             # 리소스 타입별 저장
@@ -557,7 +531,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
 
 # 사용 예시
 if __name__ == "__main__":
-    base_dir = Path(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back")
+    base_dir = Path(r"D:\owncloud_data_20241014\1_KETI\논문\ongoing\llm_web_translation_dataset\6")
     
     # 모든 original.mhtml 파일 찾기
     mhtml_files = list(base_dir.rglob("original.mhtml"))
@@ -565,7 +539,7 @@ if __name__ == "__main__":
     print(f"Found {len(mhtml_files)} original.mhtml files")
 
     # 각 파일 처리
-    for i, mhtml_file in enumerate(mhtml_files, 1):
+    for i, mhtml_file in enumerate(mhtml_files):
         try:
             print(f"\nProcessing file {i}/{len(mhtml_files)}: {mhtml_file}")
             parse_mhtml_file(mhtml_file, download_fonts=False)
