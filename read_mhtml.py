@@ -49,11 +49,8 @@ def parse_mhtml_file(file_path, download_fonts=True):
     total_replacement_count = 0
     
     def sanitize_filename(filename):
-        # 파일명에서 확장자만 추출
-        
         # UUID 생성
         sanitized_name = str(uuid.uuid4())[:8]
-        print("sanitized name:", sanitized_name)
         # 최종 파일명 생성 (UUID + 확장자)
         final_name = f"{sanitized_name}"
         
@@ -61,8 +58,6 @@ def parse_mhtml_file(file_path, download_fonts=True):
         while os.path.exists(final_name):
             sanitized_name = str(uuid.uuid4())[:8]
             final_name = f"{sanitized_name}"
-
-        print("sanitized fin name:", final_name)
         return final_name
 
     def download_web_font(font_url, base_url=None):
@@ -300,14 +295,21 @@ def parse_mhtml_file(file_path, download_fonts=True):
         # HTML 디코딩
         detected = chardet.detect(payload)
         try:
-            content = payload.decode(detected['encoding'])
-        except:
-            for encoding in ['utf-8', 'cp949', 'euc-kr', 'iso-8859-1']:
-                try:
-                    content = payload.decode(encoding)
-                    break
-                except:
-                    continue
+            # 먼저 UTF-8로 시도
+            content = payload.decode('utf-8')
+        except UnicodeDecodeError:
+            # UTF-8 실패시 chardet로 인코딩 감지
+            detected = chardet.detect(payload)
+            try:
+                content = payload.decode(detected['encoding'] if detected['encoding'] else 'utf-8')
+            except:
+                # 다른 일반적인 인코딩들로 시도
+                for encoding in ['cp1252', 'iso-8859-1', 'cp949', 'euc-kr']:
+                    try:
+                        content = payload.decode(encoding)
+                        break
+                    except:
+                        continue
         
         soup = BeautifulSoup(content, 'html.parser')
         
@@ -531,7 +533,7 @@ def parse_mhtml_file(file_path, download_fonts=True):
 
 # 사용 예시
 if __name__ == "__main__":
-    base_dir = Path(r"D:\owncloud_data_20241014\1_KETI\논문\ongoing\llm_web_translation_dataset\6")
+    base_dir = Path(r"./data/survey/raw-survey-data")
     
     # 모든 original.mhtml 파일 찾기
     mhtml_files = list(base_dir.rglob("original.mhtml"))
@@ -546,7 +548,8 @@ if __name__ == "__main__":
             print(f"Successfully processed: {mhtml_file}")
         except Exception as e:
             print(f"Error processing {mhtml_file}: {str(e)}")
-    
-    for i, mhtml_file in enumerate(mhtml_files, 1):
+
+    print("[*] processeing completed. Total:", len(mhtml_files))
+    for i, mhtml_file in enumerate(mhtml_files):
         print(mhtml_file)
     # parse_mhtml_file(r"C:\Users\byunggill\llm_web_translation_data_collector\data_back\43\original.mhtml", download_fonts=False)
